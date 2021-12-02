@@ -1,0 +1,55 @@
+version(1);
+project_name = "projet";
+
+patterns = {
+    "*.c",
+    "*.cpp",
+    "*.h",
+    "*.m",
+    "*.mm",
+    "*.bat",
+    "*.sh",
+    "*.4coder",
+    "*.txt",
+};
+blacklist_patterns = {
+    ".*",
+};
+load_paths_custom = {
+    {"."},
+};
+load_paths = {
+    { load_paths_custom, .os = "win"  },
+    { load_paths_custom, .os = "linux"},
+    { load_paths_custom, .os = "mac"  },
+};
+
+command_list = {
+    {.name = "build",
+        .out = "*console*", .footer_panel = true, .save_dirty_files = true,
+        .cmd = { 
+            {".\\build.bat", .os ="win"  },
+            {build_super_x64_linux , .os ="linux"},
+            {build_super_x64_mac , .os ="mac"  },
+        }, 
+    },
+    
+    { .name = "run",
+        .out = "*console*", .footer_panel = true, .save_dirty_files = true,
+        .cmd = { 
+            {".\\run.bat", .os ="win" },
+            {build_super_x86_linux, .os ="linux" }, 
+        }, 
+    },
+    
+    { .name = "debug",
+        .out = "*console*", .footer_panel = true, .save_dirty_files = true,
+        .cmd = { 
+            {".\\debug.bat", .os ="win" },
+        }, 
+    },
+};
+
+fkey_command[1] = "build";
+fkey_command[2] = "run";
+fkey_command[3] = "debug";
