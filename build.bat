@@ -7,3 +7,4 @@ if not exist .\build mkdir .\build
 pushd .\build
 echo -----------------
 cl -Zi ..\code\win32_render.c -Fe%app_name%.exe user32.lib gdi32.lib
+popd

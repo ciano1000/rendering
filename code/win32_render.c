@@ -8,6 +8,7 @@
 
 global b32 g_running;
 HBITMAP g_bitmap = null;
+
 internal LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param) {
     LRESULT result = null;
     
@@ -52,6 +53,12 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
         
         if(hwnd) {
             ShowWindow(hwnd, cmd_show);
+       
+            //TODO: move this up into the WM_RESIZE message and only set it there
+            RECT win_rect;
+            GetWindowRect(hwnd, &win_rect);
+            u32 win_width = win_rect.right - win_rect.left;
+            u32 win_height = win_rect.bottom - win_rect.top;
             
             //since we set our class style to be "CS_OWNDC" we don't need to release this as we don't share it with any other window.
             HDC device_ctx = GetDC(hwnd);
@@ -72,8 +79,28 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
             
             g_running = true;
             while(g_running) {
+                u32 stride = 4 * 1280;
+                u8 *row = bitmap_memory;
+                for(u32 y = 0; y < 720; y++) {
+                    u8 *pixel = row;
+                    for(u32 x = 0; x < 1280; x++) {
+                        *pixel = x;
+                        pixel++;
+                        
+                        *pixel = y;
+                        pixel++;
+                        
+                        *pixel = 0;
+                        pixel++;
+                        
+                        *pixel = 0;
+                        pixel++;
+                    }
+                    
+                    row += stride;
+                }
                 
-                StretchDIBits(device_ctx, 0, 0, , , 0, 0, 1280, 720, bitmap_memory, );
+                StretchDIBits(device_ctx, 0, 0, win_width, win_height, 0, 0, 1280, 720, bitmap_memory, &bitmap_info, DIB_RGB_COLORS, SRCCOPY);
                 
                 // TODO(Cian): handle all win messages here and send them to a seperate thread to prevent blocking
                 MSG message;
