@@ -6,8 +6,38 @@
 #include <string.h>
 #include <Windows.h>
 
+#define BUFFER_WIDTH 1280
+#define BUFFER_HEIGHT 720
+#define BYTES_PER_PIXEL 4
+
+typedef struct win32_buffer{
+    BITMAPINFO info;
+    void *memory;
+    u32 width;
+    u32 height;
+    u32 stride;
+} Win32_Buffer;
+
+typedef struct win32_dimension {
+    u32 width;
+    u32 height;
+} Win32_Dimension;
+
+global Win32_Buffer g_back_buffer;
 global b32 g_running;
 HBITMAP g_bitmap = null;
+
+internal Win32_Dimension win32_get_window_dimension(HWND window) {
+    Win32_Dimension result = {0};
+    
+    RECT win_rect;
+    GetWindowRect(window, &win_rect);
+    result.width = win_rect.right - win_rect.left;
+    result.height = win_rect.bottom - win_rect.top;
+    
+    return result;
+}
+
 
 internal LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param) {
     LRESULT result = null;
@@ -18,6 +48,15 @@ internal LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM w_param, LPARA
         } break;
         case WM_DESTROY: {
             g_running = false;
+        } break;
+        case WM_PAINT: {
+            //TODO blit to screen 
+            PAINTSTRUCT paint_s;
+            HDC device_ctx = BeginPaint(hwnd, &paint_s);
+            Win32_Dimension win_dimension = win32_get_window_dimension(hwnd);
+            StretchDIBits(device_ctx, 0, 0, win_dimension.width, win_dimension.height, 0, 0, 1280, 720, g_back_buffer.memory, &g_back_buffer.info, DIB_RGB_COLORS, SRCCOPY);
+            EndPaint(hwnd, &paint_s);
+            
         } break;
         default: {
             result = DefWindowProcA(hwnd, msg, w_param, l_param);
@@ -53,18 +92,15 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
         
         if(hwnd) {
             ShowWindow(hwnd, cmd_show);
-       
-            //TODO: move this up into the WM_RESIZE message and only set it there
-            RECT win_rect;
-            GetWindowRect(hwnd, &win_rect);
-            u32 win_width = win_rect.right - win_rect.left;
-            u32 win_height = win_rect.bottom - win_rect.top;
-            
+
             //since we set our class style to be "CS_OWNDC" we don't need to release this as we don't share it with any other window.
             HDC device_ctx = GetDC(hwnd);
-            
+              
+            g_back_buffer.width = BUFFER_WIDTH;
+            g_back_buffer.height = BUFFER_HEIGHT;
+            g_back_buffer.stride = g_back_buffer.width * BYTES_PER_PIXEL;    
             //might need to be global
-            void *bitmap_memory = VirtualAlloc(null, (1280 * 720 * 4), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+            g_back_buffer.memory = VirtualAlloc(null, (g_back_buffer.width * g_back_buffer.height * BYTES_PER_PIXEL), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
             
             BITMAPINFO bitmap_info = {0};
             
@@ -75,12 +111,14 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
             bitmap_info.bmiHeader.biBitCount    = 32; //8 bits per channel plus another 8 for alignment.
             bitmap_info.bmiHeader.biCompression = BI_RGB;
             
-            g_bitmap = CreateDIBSection(device_ctx, &bitmap_info, DIB_RGB_COLORS, &bitmap_memory, null, null); //must DeleteObject when ready with this.
+            g_back_buffer.info = bitmap_info;
+            
+            CreateDIBSection(device_ctx, &g_back_buffer.info, DIB_RGB_COLORS, &g_back_buffer.memory, null, null); //must DeleteObject when ready with this.
             
             g_running = true;
             while(g_running) {
                 u32 stride = 4 * 1280;
-                u8 *row = bitmap_memory;
+                u8 *row = g_back_buffer.memory;
                 for(u32 y = 0; y < 720; y++) {
                     u8 *pixel = row;
                     for(u32 x = 0; x < 1280; x++) {
@@ -100,7 +138,8 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
                     row += stride;
                 }
                 
-                StretchDIBits(device_ctx, 0, 0, win_width, win_height, 0, 0, 1280, 720, bitmap_memory, &bitmap_info, DIB_RGB_COLORS, SRCCOPY);
+                Win32_Dimension win_dimension = win32_get_window_dimension(hwnd);
+                StretchDIBits(device_ctx, 0, 0, win_dimension.width, win_dimension.height, 0, 0, g_back_buffer.width, g_back_buffer.height, g_back_buffer.memory, &g_back_buffer.info, DIB_RGB_COLORS, SRCCOPY);
                 
                 // TODO(Cian): handle all win messages here and send them to a seperate thread to prevent blocking
                 MSG message;
