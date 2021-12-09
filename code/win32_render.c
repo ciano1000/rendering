@@ -38,7 +38,6 @@ internal Win32_Dimension win32_get_window_dimension(HWND window) {
     return result;
 }
 
-
 internal LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param) {
     LRESULT result = null;
     
@@ -114,29 +113,30 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
             g_back_buffer.info = bitmap_info;
             
             CreateDIBSection(device_ctx, &g_back_buffer.info, DIB_RGB_COLORS, &g_back_buffer.memory, null, null); //must DeleteObject when ready with this.
-            
+            u8 x_offset = 0;
+            u8 y_offset = 0;
             g_running = true;
             while(g_running) {
                 u32 stride = 4 * 1280;
                 u8 *row = g_back_buffer.memory;
                 for(u32 y = 0; y < 720; y++) {
-                    u8 *pixel = row;
+                    u32 *pixel = (u32*)row;
                     for(u32 x = 0; x < 1280; x++) {
-                        *pixel = x;
-                        pixel++;
-                        
-                        *pixel = y;
-                        pixel++;
-                        
-                        *pixel = 0;
-                        pixel++;
-                        
-                        *pixel = 0;
-                        pixel++;
+                        u8 red = (x + x_offset);
+                        u8 blue = (y + y_offset);
+                        u8 green = 0;
+                        u8 padding = 0;
+                        //Memory Layout (bytes): BB GG RR XX
+                        //Since this is Little Endian - LSB first
+                        //When we take all these bytes together as a 32 bit int the bits are actually in the following order (right to left)
+                        // XX RR GG BB - therefore, green is shifted left 8 bits, red left 16 bits, blue does not need to be shifted.
+                        *pixel++ = (padding << 24) | (red << 16) | (green << 8) | (blue);
                     }
                     
                     row += stride;
                 }
+                x_offset++;
+                y_offset++;
                 
                 Win32_Dimension win_dimension = win32_get_window_dimension(hwnd);
                 StretchDIBits(device_ctx, 0, 0, win_dimension.width, win_dimension.height, 0, 0, g_back_buffer.width, g_back_buffer.height, g_back_buffer.memory, &g_back_buffer.info, DIB_RGB_COLORS, SRCCOPY);
