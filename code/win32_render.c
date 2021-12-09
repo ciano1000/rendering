@@ -116,12 +116,18 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
             QueryPerformanceFrequency(&perf_counter_frequency_result);
             s64 perf_counter_frequency = perf_counter_frequency_result.QuadPart;
             
+            //Set scheduler granularity and check if succesful
+            b32 is_granular_sleep = (timeBeginPeriod(1) == TIMERR_NOERROR);
+            
+            g_running = true;
+            
+            u32 refresh_rate = 60;
+            f32 target_seconds_per_frame = 1.0f / refresh_rate;
+             
             LARGE_INTEGER start_counter;
             QueryPerformanceCounter(&start_counter);
             
             u64 start_cycle_count = __rdtsc();
-            
-            g_running = true;
             while(g_running) {
                 u32 stride = 4 * 1280;
                 u8 *row = g_back_buffer.memory;
@@ -157,20 +163,36 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
                     DispatchMessageA(&message);
                 }
                 
-                
+                //TODO Cian: pull out this into functions for getting Clock time and elapsed seconds etc.
                 LARGE_INTEGER end_counter;
                 QueryPerformanceCounter(&end_counter);
-                
-                u64 end_cycle_count = __rdtsc();
-                u64 elapsed_cycles  = end_cycle_count - start_cycle_count;
                 s64 counter_elapsed = end_counter.QuadPart - start_counter.QuadPart;
+                f32 actual_seconds_for_frame = (f32)counter_elapsed / (f32)perf_counter_frequency;
+#if 0 //TODO Cian: pull this stuff into proper debug timing helpers later
                 s32 time_elapsed_ms = (s32)((counter_elapsed * 1000) / perf_counter_frequency); 
                 s32 frames_per_second = perf_counter_frequency / counter_elapsed;
                 char buffer[256];
                 wsprintfA(buffer, "ms/frame: %dms, fps: %dfps, %dcycles per frame\n", time_elapsed_ms, frames_per_second, elapsed_cycles);
                 OutputDebugStringA(buffer);
-                //print out here
+#endif               
+
+                //TODO Cian: check opposite case where we miss our framerate
+                while(actual_seconds_for_frame < target_seconds_per_frame) {
+                    if(is_granular_sleep) {
+                        DWORD ms_to_sleep = (DWORD)((target_seconds_per_frame - actual_seconds_for_frame) * 1000.0f);
+                        if(ms_to_sleep > 0) {
+                            Sleep(ms_to_sleep);
+                        }
+                    }
+                    
+                    QueryPerformanceCounter(&end_counter);
+                    counter_elapsed = end_counter.QuadPart - start_counter.QuadPart;
+                    actual_seconds_for_frame = (f32)counter_elapsed / (f32)perf_counter_frequency;
+                }
                 start_counter = end_counter;
+                
+                u64 end_cycle_count = __rdtsc();
+                u64 elapsed_cycles  = end_cycle_count - start_cycle_count;
                 start_cycle_count = end_cycle_count;
             }
         } else {
@@ -178,5 +200,7 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
     } else {
     } 
     
+    
+    timeEndPeriod(1);
     return 0;
 }

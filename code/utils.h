@@ -31,8 +31,8 @@ typedef u32 b32;
 
 
 #define ArrayCount(array) (sizeof(array)/sizeof(array[0]))
-// TODO(Cian): intrinsics????
-// TODO(Cian): Look at pulling these out into a Maths module later 
+// TODO Cian: intrinsics????
+// TODO Cian: Look at pulling these out into a Maths module later 
 
 #define TOKEN_PASTE(x, y) x##y
 #define CAT(x,y) TOKEN_PASTE(x,y)
