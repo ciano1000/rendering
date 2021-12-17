@@ -1,3 +1,10 @@
+/* TODO Today 
+*    Set Up:
+*    - Canvas, Viewport, Red Sphere, Ray Intersection With that Sphere, Render Sphere Color to screen
+*    - General Cleanup of Code
+*
+*/
+
 #define _CRT_SECURE_NO_WARNINGS
 #include <windows.h>
 #include "utils.h"
@@ -5,9 +12,39 @@
 #include <string.h>
 #include <Windows.h>
 
-#define BUFFER_WIDTH 1280
-#define BUFFER_HEIGHT 720
+#define MAX_DISTANCE 1000.0f //arbitrary max tracing distance
+
+#define BUFFER_WIDTH 512
+#define BUFFER_HEIGHT 512
 #define BYTES_PER_PIXEL 4
+
+#define PROJ_PLANE_D 1
+
+#define ARRAY_COUNT(array) (sizeof(array) / sizeof(array[0]))
+
+typedef struct v3 {
+    f32 x, y, z;
+} V3;
+
+typedef struct v2 {
+    f32 x, y;
+} V2;
+
+typedef struct color {
+    u8 r, g, b;
+} Color;
+
+typedef struct sphere {
+    f32 radius;
+    V3 center;
+    Color color;
+} Sphere;
+
+global Sphere spheres[] = {
+    {1, {0, -1, 3}, {255, 0, 0}},
+    {1, {2, 0, 4}, {0, 255, 0}},
+    {1, {-2, 0, 4}, {0, 0, 255}}
+};
 
 typedef struct win32_buffer{
     BITMAPINFO info;
@@ -21,7 +58,6 @@ typedef struct win32_dimension {
     u32 width;
     u32 height;
 } Win32_Dimension;
-
 global Win32_Buffer g_back_buffer;
 global b32 g_running;
 HBITMAP g_bitmap = null;
@@ -35,6 +71,69 @@ internal Win32_Dimension win32_get_window_dimension(HWND window) {
     result.height = win_rect.bottom - win_rect.top;
     
     return result;
+}
+
+internal void win32_primitive_sphere_raytracing() {
+    u32 stride = 4 * 1280;
+    u8 *row = g_back_buffer.memory;
+    for(u32 y = 0; y < BUFFER_HEIGHT; y++) {
+        u32 *pixel = (u32*)row;
+        for(u32 x = 0; x < BUFFER_WIDTH; x++) {
+        
+            Color col_at_pixel = {0};
+            {
+                u32 array_length = ARRAY_COUNT(spheres);
+                u32 closest_sphere = 0;
+                f32 closest_t = MAX_DISTANCE;
+                Sphere current_sphere;
+                for(u32 i = 0; i < array_length; i++) {
+                    current_sphere = spheres[i];
+                    
+                }
+            
+                V3 viewport_coords = {((f32)x / BUFFER_WIDTH), ((f32)y / BUFFER_HEIGHT), PROJ_PLANE_D}; //viewport width/height is 1 so let's ignore it for simplicity sake, z axis is just the viewports distance from the camera
+            
+                //convert pixel coordinates to viewport ones
+                
+                //trace a ray from the camera origin (0, 0, 0) through the viewport coordinates
+                //just need to calculate the direction vector of the ray, and then determine if/what points intersect the sphere
+                V3 ray_dir = {0}; //since the camera is at origin, all we need to do is normalise the viewport vector
+            }
+            
+            u8 red = col_at_pixel.r;
+            u8 blue = col_at_pixel.g;
+            u8 green = col_at_pixel.b;
+            u8 padding = 0;
+            //Memory Layout (bytes): BB GG RR XX
+            //Since this is Little Endian - LSB first
+            //When we take all these bytes together as a 32 bit int the bits are actually in the following order (right to left)
+            // XX RR GG BB - therefore, green is shifted left 8 bits, red left 16 bits, blue does not need to be shifted.
+            *pixel++ = (padding << 24) | (red << 16) | (green << 8) | (blue);
+        }
+        
+        row += stride;
+    }
+}
+
+internal void win32_render_weird_gradient(u8 x_offset, u8 y_offset) {
+    u32 stride = 4 * 1280;
+    u8 *row = g_back_buffer.memory;
+    for(u32 y = 0; y < BUFFER_HEIGHT; y++) {
+        u32 *pixel = (u32*)row;
+        for(u32 x = 0; x < BUFFER_WIDTH; x++) {
+            u8 red = (x + x_offset);
+            u8 blue = (y + y_offset);
+            u8 green = 0;
+            u8 padding = 0;
+            //Memory Layout (bytes): BB GG RR XX
+            //Since this is Little Endian - LSB first
+            //When we take all these bytes together as a 32 bit int the bits are actually in the following order (right to left)
+            // XX RR GG BB - therefore, green is shifted left 8 bits, red left 16 bits, blue does not need to be shifted.
+            *pixel++ = (padding << 24) | (red << 16) | (green << 8) | (blue);
+        }
+        
+        row += stride;
+    }
 }
 
 internal LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param) {
@@ -129,24 +228,7 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
             
             u64 start_cycle_count = __rdtsc();
             while(g_running) {
-                u32 stride = 4 * 1280;
-                u8 *row = g_back_buffer.memory;
-                for(u32 y = 0; y < 720; y++) {
-                    u32 *pixel = (u32*)row;
-                    for(u32 x = 0; x < 1280; x++) {
-                        u8 red = (x + x_offset);
-                        u8 blue = (y + y_offset);
-                        u8 green = 0;
-                        u8 padding = 0;
-                        //Memory Layout (bytes): BB GG RR XX
-                        //Since this is Little Endian - LSB first
-                        //When we take all these bytes together as a 32 bit int the bits are actually in the following order (right to left)
-                        // XX RR GG BB - therefore, green is shifted left 8 bits, red left 16 bits, blue does not need to be shifted.
-                        *pixel++ = (padding << 24) | (red << 16) | (green << 8) | (blue);
-                    }
-                    
-                    row += stride;
-                }
+                //win32_render_weird_gradient(x_offset, y_offset);
                 x_offset++;
                 y_offset++;
                 
