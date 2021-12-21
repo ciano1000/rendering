@@ -15,10 +15,10 @@
 
 #define MAX_DISTANCE 1000.0f //arbitrary max tracing distance
 
-#define BUFFER_WIDTH 1024
-#define BUFFER_HEIGHT 1024
-#define HALF_BUFFER_HEIGHT 512
-#define HALF_BUFFER_WIDTH 512
+#define BUFFER_WIDTH 1280
+#define BUFFER_HEIGHT 720
+#define HALF_BUFFER_HEIGHT 360
+#define HALF_BUFFER_WIDTH 640
 #define BYTES_PER_PIXEL 4
 
 #define PROJ_PLANE_D 1
@@ -88,8 +88,8 @@ internal void win32_primitive_sphere_raytracing() {
         
             Color col_at_pixel = {0};
             {
-                u32 canvas_x = x - HALF_BUFFER_WIDTH;
-                u32 canvas_y = y - HALF_BUFFER_HEIGHT;
+                f32 canvas_x = (f32)x - HALF_BUFFER_WIDTH;
+                f32 canvas_y = -((f32)y - HALF_BUFFER_HEIGHT);
                 V3 viewport_coords = {((f32)canvas_x / (f32)BUFFER_WIDTH), ((f32)canvas_y / (f32)BUFFER_HEIGHT), PROJ_PLANE_D}; //viewport width/height is 1 so let's ignore it for simplicity sake, z axis is just the viewports distance from the camera
             
                 u32 array_length = ARRAY_COUNT(spheres);
