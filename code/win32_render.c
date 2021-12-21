@@ -11,16 +11,20 @@
 #include <stdio.h>
 #include <string.h>
 #include <Windows.h>
+#include <math.h>
 
 #define MAX_DISTANCE 1000.0f //arbitrary max tracing distance
 
-#define BUFFER_WIDTH 512
-#define BUFFER_HEIGHT 512
+#define BUFFER_WIDTH 1024
+#define BUFFER_HEIGHT 1024
+#define HALF_BUFFER_HEIGHT 512
+#define HALF_BUFFER_WIDTH 512
 #define BYTES_PER_PIXEL 4
 
 #define PROJ_PLANE_D 1
 
 #define ARRAY_COUNT(array) (sizeof(array) / sizeof(array[0]))
+#define DOT(a, b) ((a.x * b.x) + (a.y * b.y) + (a.z * b.z))
 
 typedef struct v3 {
     f32 x, y, z;
@@ -34,6 +38,8 @@ typedef struct color {
     u8 r, g, b;
 } Color;
 
+global Color background_color = {40, 150, 40};
+
 typedef struct sphere {
     f32 radius;
     V3 center;
@@ -42,8 +48,8 @@ typedef struct sphere {
 
 global Sphere spheres[] = {
     {1, {0, -1, 3}, {255, 0, 0}},
-    {1, {2, 0, 4}, {0, 255, 0}},
-    {1, {-2, 0, 4}, {0, 0, 255}}
+    {1, {2, 0, 4}, {0, 0, 255}},
+    {1, {-2, 0, 4}, {0, 255, 0}}
 };
 
 typedef struct win32_buffer{
@@ -74,7 +80,7 @@ internal Win32_Dimension win32_get_window_dimension(HWND window) {
 }
 
 internal void win32_primitive_sphere_raytracing() {
-    u32 stride = 4 * 1280;
+    u32 stride = 4 * BUFFER_WIDTH;
     u8 *row = g_back_buffer.memory;
     for(u32 y = 0; y < BUFFER_HEIGHT; y++) {
         u32 *pixel = (u32*)row;
@@ -82,22 +88,45 @@ internal void win32_primitive_sphere_raytracing() {
         
             Color col_at_pixel = {0};
             {
+                u32 canvas_x = x - HALF_BUFFER_WIDTH;
+                u32 canvas_y = y - HALF_BUFFER_HEIGHT;
+                V3 viewport_coords = {((f32)canvas_x / (f32)BUFFER_WIDTH), ((f32)canvas_y / (f32)BUFFER_HEIGHT), PROJ_PLANE_D}; //viewport width/height is 1 so let's ignore it for simplicity sake, z axis is just the viewports distance from the camera
+            
                 u32 array_length = ARRAY_COUNT(spheres);
-                u32 closest_sphere = 0;
+                Sphere *closest_sphere = null;
                 f32 closest_t = MAX_DISTANCE;
-                Sphere current_sphere;
+                Sphere *current_sphere;
                 for(u32 i = 0; i < array_length; i++) {
-                    current_sphere = spheres[i];
+                    current_sphere = spheres + i;
                     
+                    f32 r = current_sphere->radius;
+                    V3 CO = {-current_sphere->center.x, -current_sphere->center.y, -current_sphere->center.z}; // equals Origin - Center, origin is all 0's
+                    f32 a = DOT(viewport_coords, viewport_coords);
+                    f32 b = 2 * DOT(CO, viewport_coords);
+                    f32 c = DOT(CO, CO) - (r * r);
+                    f32 discriminant = b * b - 4 * a * c; //part of the quadratic equation roots formula
+                    
+                    if (discriminant >= 0) {
+                        f32 t1 = (-b + sqrt(discriminant)) / 2 * a;
+                        f32 t2 = (-b - sqrt(discriminant)) / 2 * a;
+                        
+                        if(t1 > 1 && t1 <= MAX_DISTANCE && t1 < closest_t) {
+                            closest_t = t1;
+                            closest_sphere = current_sphere;
+                        }
+                        
+                        if(t2 > 1 && t2 <= MAX_DISTANCE && t2 < closest_t) {
+                            closest_t = t2;
+                            closest_sphere = current_sphere;
+                        }
+                    } 
                 }
-            
-                V3 viewport_coords = {((f32)x / BUFFER_WIDTH), ((f32)y / BUFFER_HEIGHT), PROJ_PLANE_D}; //viewport width/height is 1 so let's ignore it for simplicity sake, z axis is just the viewports distance from the camera
-            
-                //convert pixel coordinates to viewport ones
                 
-                //trace a ray from the camera origin (0, 0, 0) through the viewport coordinates
-                //just need to calculate the direction vector of the ray, and then determine if/what points intersect the sphere
-                V3 ray_dir = {0}; //since the camera is at origin, all we need to do is normalise the viewport vector
+                if(closest_sphere != null) {
+                    col_at_pixel = closest_sphere->color;
+                } else {
+                    col_at_pixel = background_color;
+                }
             }
             
             u8 red = col_at_pixel.r;
@@ -116,7 +145,7 @@ internal void win32_primitive_sphere_raytracing() {
 }
 
 internal void win32_render_weird_gradient(u8 x_offset, u8 y_offset) {
-    u32 stride = 4 * 1280;
+    u32 stride = 4 * BUFFER_WIDTH;
     u8 *row = g_back_buffer.memory;
     for(u32 y = 0; y < BUFFER_HEIGHT; y++) {
         u32 *pixel = (u32*)row;
@@ -150,7 +179,7 @@ internal LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM w_param, LPARA
             PAINTSTRUCT paint_s;
             HDC device_ctx = BeginPaint(hwnd, &paint_s);
             Win32_Dimension win_dimension = win32_get_window_dimension(hwnd);
-            StretchDIBits(device_ctx, 0, 0, win_dimension.width, win_dimension.height, 0, 0, 1280, 720, g_back_buffer.memory, &g_back_buffer.info, DIB_RGB_COLORS, SRCCOPY);
+            StretchDIBits(device_ctx, 0, 0, win_dimension.width, win_dimension.height, 0, 0, g_back_buffer.width, g_back_buffer.height, g_back_buffer.memory, &g_back_buffer.info, DIB_RGB_COLORS, SRCCOPY);
             EndPaint(hwnd, &paint_s);
             
         } break;
@@ -200,8 +229,7 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
             
             bitmap_info.bmiHeader.biSize        = sizeof(bitmap_info.bmiHeader); //windows needs this to use as an offset to retrieve the location of the bitmapinfo's color table as different versions of the bmiheader struct with different sizes may exist for different api versions plus some other reasons etc..
             bitmap_info.bmiHeader.biWidth        = g_back_buffer.width; 
-            bitmap_info.bmiHeader.biHeight        = g_back_buffer.height; 
-            bitmap_info.bmiHeader.biHeight      = -720;//set to negative so that the origin is in the top left as described by msdn, if negative biCompression must be BI_RGB or BI_BITFIELDS, cannot be compressed if top down.
+            bitmap_info.bmiHeader.biHeight        = -g_back_buffer.height; //set to negative so that the origin is in the top left as described by msdn, if negative biCompression must be BI_RGB or BI_BITFIELDS, cannot be compressed if top down.
             bitmap_info.bmiHeader.biPlanes      = 1; //must be set to 1 apparently, probably some legacy thing
             bitmap_info.bmiHeader.biBitCount    = 32; //8 bits per channel plus another 8 for alignment.
             bitmap_info.bmiHeader.biCompression = BI_RGB;
@@ -229,6 +257,7 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
             u64 start_cycle_count = __rdtsc();
             while(g_running) {
                 //win32_render_weird_gradient(x_offset, y_offset);
+                win32_primitive_sphere_raytracing();
                 x_offset++;
                 y_offset++;
                 
