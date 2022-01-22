@@ -8,7 +8,8 @@
 
 #define MAX_DISTANCE 1000.0f //arbitrary max tracing distance
 
-//Current assumption is that the viewport is a square, this avoids weird FOV issues
+//Current assumption is that the viewport is a square and distance between origin and viewport is 1, this avoids weird FOV issues
+//TODO in future should be able to set any aspect ratio & fov, and then calculate d from that 
 #define BUFFER_WIDTH 1024
 #define BUFFER_HEIGHT 1024
 #define HALF_BUFFER_HEIGHT 512
