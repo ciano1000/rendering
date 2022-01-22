@@ -1,10 +1,3 @@
-/* TODO Today 
-*    Set Up:
-*    - Canvas, Viewport, Red Sphere, Ray Intersection With that Sphere, Render Sphere Color to screen
-*    - General Cleanup of Code
-*
-*/
-
 #define _CRT_SECURE_NO_WARNINGS
 #include <windows.h>
 #include "utils.h"
@@ -15,10 +8,11 @@
 
 #define MAX_DISTANCE 1000.0f //arbitrary max tracing distance
 
-#define BUFFER_WIDTH 1280
-#define BUFFER_HEIGHT 720
-#define HALF_BUFFER_HEIGHT 360
-#define HALF_BUFFER_WIDTH 640
+//Current assumption is that the viewport is a square, this avoids weird FOV issues
+#define BUFFER_WIDTH 1024
+#define BUFFER_HEIGHT 1024
+#define HALF_BUFFER_HEIGHT 512
+#define HALF_BUFFER_WIDTH 512
 #define BYTES_PER_PIXEL 4
 
 #define PROJ_PLANE_D 1
@@ -52,18 +46,18 @@ global Sphere spheres[] = {
     {1, {-2, 0, 4}, {0, 255, 0}}
 };
 
+typedef struct win32_dimension {
+    s32 width;
+    s32 height;
+} Win32_Dimension;
+
 typedef struct win32_buffer{
     BITMAPINFO info;
     void *memory;
-    u32 width;
-    u32 height;
-    u32 stride;
+    Win32_Dimension size;
+    s32 stride;
 } Win32_Buffer;
 
-typedef struct win32_dimension {
-    u32 width;
-    u32 height;
-} Win32_Dimension;
 global Win32_Buffer g_back_buffer;
 global b32 g_running;
 HBITMAP g_bitmap = null;
@@ -80,17 +74,17 @@ internal Win32_Dimension win32_get_window_dimension(HWND window) {
 }
 
 internal void win32_primitive_sphere_raytracing() {
-    u32 stride = 4 * BUFFER_WIDTH;
+    u32 stride = 4 * g_back_buffer.size.width;
     u8 *row = g_back_buffer.memory;
-    for(u32 y = 0; y < BUFFER_HEIGHT; y++) {
+    for(u32 y = 0; y < g_back_buffer.size.height; y++) {
         u32 *pixel = (u32*)row;
-        for(u32 x = 0; x < BUFFER_WIDTH; x++) {
+        for(u32 x = 0; x < g_back_buffer.size.width; x++) {
         
             Color col_at_pixel = {0};
             {
-                f32 canvas_x = (f32)x - HALF_BUFFER_WIDTH;
-                f32 canvas_y = -((f32)y - HALF_BUFFER_HEIGHT);
-                V3 viewport_coords = {((f32)canvas_x / (f32)BUFFER_WIDTH), ((f32)canvas_y / (f32)BUFFER_HEIGHT), PROJ_PLANE_D}; //viewport width/height is 1 so let's ignore it for simplicity sake, z axis is just the viewports distance from the camera
+                f32 canvas_x = (f32)x - (g_back_buffer.size.width / 2);
+                f32 canvas_y = -((f32)y - (g_back_buffer.size.height / 2));
+                V3 viewport_coords = {((f32)canvas_x / (f32)g_back_buffer.size.width), ((f32)canvas_y / (f32)g_back_buffer.size.height), PROJ_PLANE_D}; //viewport width/height is 1 so let's ignore it for simplicity sake, z axis is just the viewports distance from the camera
             
                 u32 array_length = ARRAY_COUNT(spheres);
                 Sphere *closest_sphere = null;
@@ -179,7 +173,7 @@ internal LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM w_param, LPARA
             PAINTSTRUCT paint_s;
             HDC device_ctx = BeginPaint(hwnd, &paint_s);
             Win32_Dimension win_dimension = win32_get_window_dimension(hwnd);
-            StretchDIBits(device_ctx, 0, 0, win_dimension.width, win_dimension.height, 0, 0, g_back_buffer.width, g_back_buffer.height, g_back_buffer.memory, &g_back_buffer.info, DIB_RGB_COLORS, SRCCOPY);
+            StretchDIBits(device_ctx, 0, 0, g_back_buffer.size.width, g_back_buffer.size.height, 0, 0, g_back_buffer.size.width, g_back_buffer.size.height, g_back_buffer.memory, &g_back_buffer.info, DIB_RGB_COLORS, SRCCOPY);
             EndPaint(hwnd, &paint_s);
             
         } break;
@@ -220,16 +214,16 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
             //since we set our class style to be "CS_OWNDC" we don't need to release this as we don't share it with any other window.
             HDC device_ctx = GetDC(hwnd);
               
-            g_back_buffer.width = BUFFER_WIDTH;
-            g_back_buffer.height = BUFFER_HEIGHT;
-            g_back_buffer.stride = g_back_buffer.width * BYTES_PER_PIXEL;
-            g_back_buffer.memory = VirtualAlloc(0, (g_back_buffer.width * g_back_buffer.height * BYTES_PER_PIXEL), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+            g_back_buffer.size.width = BUFFER_WIDTH;
+            g_back_buffer.size.height = BUFFER_HEIGHT;
+            g_back_buffer.stride = g_back_buffer.size.width * BYTES_PER_PIXEL;
+            g_back_buffer.memory = VirtualAlloc(0, (g_back_buffer.size.width * g_back_buffer.size.height * BYTES_PER_PIXEL), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
             
             BITMAPINFO bitmap_info = {0};
             
             bitmap_info.bmiHeader.biSize        = sizeof(bitmap_info.bmiHeader); //windows needs this to use as an offset to retrieve the location of the bitmapinfo's color table as different versions of the bmiheader struct with different sizes may exist for different api versions plus some other reasons etc..
-            bitmap_info.bmiHeader.biWidth        = g_back_buffer.width; 
-            bitmap_info.bmiHeader.biHeight        = -g_back_buffer.height; //set to negative so that the origin is in the top left as described by msdn, if negative biCompression must be BI_RGB or BI_BITFIELDS, cannot be compressed if top down.
+            bitmap_info.bmiHeader.biWidth        = g_back_buffer.size.width; 
+            bitmap_info.bmiHeader.biHeight        = -g_back_buffer.size.height; //set to negative so that the origin is in the top left as described by msdn, if negative biCompression must be BI_RGB or BI_BITFIELDS, cannot be compressed if top down.
             bitmap_info.bmiHeader.biPlanes      = 1; //must be set to 1 apparently, probably some legacy thing
             bitmap_info.bmiHeader.biBitCount    = 32; //8 bits per channel plus another 8 for alignment.
             bitmap_info.bmiHeader.biCompression = BI_RGB;
@@ -262,7 +256,7 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
                 y_offset++;
                 
                 Win32_Dimension win_dimension = win32_get_window_dimension(hwnd);
-                StretchDIBits(device_ctx, 0, 0, win_dimension.width, win_dimension.height, 0, 0, g_back_buffer.width, g_back_buffer.height, g_back_buffer.memory, &g_back_buffer.info, DIB_RGB_COLORS, SRCCOPY);
+                StretchDIBits(device_ctx, 0, 0, g_back_buffer.size.width, g_back_buffer.size.height, 0, 0, g_back_buffer.size.width, g_back_buffer.size.height, g_back_buffer.memory, &g_back_buffer.info, DIB_RGB_COLORS, SRCCOPY);
                 
                 MSG message;
                 while(PeekMessage(&message, null, null, null, PM_REMOVE)) {
