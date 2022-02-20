@@ -1,9 +1,7 @@
 /*
 TODO
-Need math utility methods for normalising, adding, multiplying etc.
-still an issue with some lighting, lights seem to cause black surfaces occasionally...
-big yellow sphere doesn't seem to be getting lit
-
+left side of image seems to be getting cut off
+some issues still with diffuse and specular, not quite right, they don't match the refrerence images
 */
 
 #define _CRT_SECURE_NO_WARNINGS
@@ -80,19 +78,28 @@ typedef struct color {
     u8 r, g, b;
 } Color;
 
-global Color background_color = {40, 40, 90};
+global Color background_color = {255, 255, 255};
+
+f32 clamp(f32 val, f32 min, f32 max) {
+    if(val < min)
+        val = min;
+    if(val > max)
+        val = max;
+    return val;
+}
 
 typedef struct sphere {
     f32 radius;
     V3 center;
     Color color;
+    f32 specular;
 } Sphere;
 
 global Sphere spheres[] = {
-    {1, {0, -1, 3}, {255, 0, 0}},
-    {1, {2, 0, 4}, {0, 0, 255}},
-    {1, {-2, 0, 4}, {0, 255, 0}},
-    {5000, {0, -5001, 0}, {255, 255, 0}}
+    {1, {0, -1, 3}, {255, 0, 0}, 500},
+    {1, {2, 0, 4}, {0, 0, 255}, 500},
+    {1, {-2, 0, 4}, {0, 255, 0}, 10},
+    {5000, {0, -5001, 0}, {255, 255, 0}, 1000}
 };
 
 typedef struct light {
@@ -164,10 +171,10 @@ internal void win32_primitive_sphere_raytracing() {
                     current_sphere = spheres + i;
                     
                     f32 r = current_sphere->radius;
-                    V3 CO = {-current_sphere->center.x, -current_sphere->center.y, -current_sphere->center.z}; // equals Origin - Center, origin is all 0's
+                    V3 c0 = {-current_sphere->center.x, -current_sphere->center.y, -current_sphere->center.z}; // equals Origin - Center, origin is all 0's
                     f32 a = v3_dot(viewport_coords, viewport_coords);
-                    f32 b = 2 * v3_dot(CO, viewport_coords);
-                    f32 c = v3_dot(CO, CO) - (r * r);
+                    f32 b = 2 * v3_dot(c0, viewport_coords);
+                    f32 c = v3_dot(c0, c0) - (r * r);
                     f32 discriminant = b * b - 4 * a * c; //part of the quadratic equation roots formula
                     
                     if (discriminant >= 0) {
@@ -186,9 +193,12 @@ internal void win32_primitive_sphere_raytracing() {
                     } 
                 }
                 
+                //TODO so far we aren't using the color of the light to do anything....
                 if(closest_sphere != null) {
                     //if we have a point on the sphere, lets first calculate it's 
                     V3 p = v3_scalar(viewport_coords, closest_t);
+                    V3 v = {-p.x, -p.y, -p.z};
+                    f32 v_len = v3_length(v);
                     
                     //orgin is 0 so don't need the O in the parametric line formula
                     V3 normal = v3_normalize(v3_sub(p, closest_sphere->center)); 
@@ -199,14 +209,26 @@ internal void win32_primitive_sphere_raytracing() {
                     for(u32 i = 0; i < ARRAY_COUNT(g_point_lights); i++) {
                         Light point_light = g_point_lights[i];
                         
+                        //diffuse...
+                        
                         //calculate current direction to point light
                         V3 l = v3_sub(point_light.position, p);
                         f32 length_l = v3_length(l);
                         f32 dot = v3_dot(normal, l);
                         
-                        //see if this can be done without an if...
+                        V3 r_vec = v3_sub(v3_scalar(normal, 2 * dot), l);
+                        f32 r_len = v3_length(r_vec);
+                        
+                        //diffuse
                         if(dot > 0) {
                             light_intensity_sum += (point_light.intensity * dot) / (length_n * length_l);
+                        }
+                        
+                        //specular
+                        f32 r_dot_v = v3_dot(r_vec, v);
+                        
+                        if(r_dot_v > 0) {
+                            light_intensity_sum += point_light.intensity * pow(r_dot_v / (r_len * v_len), closest_sphere->specular);
                         }
                     }
                     
@@ -218,20 +240,26 @@ internal void win32_primitive_sphere_raytracing() {
                         f32 length_l = v3_length(l);
                         f32 dot = v3_dot(normal, l);
                         
+                        V3 r_vec = v3_sub(v3_scalar(normal, 2 * dot), l);
+                        f32 r_len = v3_length(r_vec);
+                        
                         //see if this can be done without an if...
                         if(dot > 0) {
                             //think it has to be done in this order, as assuming 1/{something} operations with floats causes imprecision, review that, something to do with associativity/commutavity
                             light_intensity_sum += (directional_light.intensity * dot) / (length_n * length_l);
                         }
+                        
+                        //specular
+                        f32 r_dot_v = v3_dot(r_vec, v);
+                    
                     }
                     
-                     // if(light_intensity_sum > 1.0f)
-                     //    light_intensity_sum = 1.0f;
-                    
+                    if(light_intensity_sum > 1.0f)
+                        light_intensity_sum = 1.0f;
                     //foreach directional light...whenever I make a game we can probably always assume this to be 1? Why would you have more than one point light?
-                    col_at_pixel.r = (u8)((f32)closest_sphere->color.r * light_intensity_sum);
-                    col_at_pixel.g = (u8)((f32)closest_sphere->color.g * light_intensity_sum);
-                    col_at_pixel.b = (u8)((f32)closest_sphere->color.b * light_intensity_sum);
+                    col_at_pixel.r = (u8)clamp((f32)closest_sphere->color.r * light_intensity_sum, 0, 255);
+                    col_at_pixel.g = (u8)clamp((f32)closest_sphere->color.g * light_intensity_sum, 0, 255);
+                    col_at_pixel.b = (u8)clamp((f32)closest_sphere->color.b * light_intensity_sum, 0, 255);
                 } else {
                     col_at_pixel = background_color;
                 }
