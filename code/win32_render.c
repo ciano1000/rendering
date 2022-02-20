@@ -1,7 +1,6 @@
 /*
 TODO
-left side of image seems to be getting cut off
-some issues still with diffuse and specular, not quite right, they don't match the refrerence images
+    next chapter - shadows and reflections
 */
 
 #define _CRT_SECURE_NO_WARNINGS
@@ -15,7 +14,7 @@ some issues still with diffuse and specular, not quite right, they don't match t
 #define MAX_DISTANCE 10000.0f //arbitrary max tracing distance
 
 //Current assumption is that the viewport is a square and distance between origin and viewport is 1, this avoids weird FOV issues
-//TODO in future should be able to set any aspect ratio & fov, and then calculate d from that 
+//TODO in future should be able to set any aspect ratio & fov, and then calculate d from that, note that this will affect some of the calculations below that will need to be updated
 #define BUFFER_WIDTH 1024
 #define BUFFER_HEIGHT 1024
 #define HALF_BUFFER_HEIGHT 512
@@ -24,11 +23,15 @@ some issues still with diffuse and specular, not quite right, they don't match t
 
 #define PROJ_PLANE_D 1
 
+#define VIEWPORT_SIZE 1
+
 #define ARRAY_COUNT(array) (sizeof(array) / sizeof(array[0]))
 
 typedef struct v3 {
     f32 x, y, z;
 } V3;
+
+global V3 camera_pos = {0, 0, 0};
 
 typedef struct v2 {
     f32 x, y;
@@ -161,7 +164,7 @@ internal void win32_primitive_sphere_raytracing() {
                 f32 canvas_x = (f32)x - (g_back_buffer.size.width / 2);
                 f32 canvas_y = -((f32)y - (g_back_buffer.size.height / 2));
                 //aka a point on the ray, the camera origin is another
-                V3 viewport_coords = {((f32)canvas_x / (f32)g_back_buffer.size.width), ((f32)canvas_y / (f32)g_back_buffer.size.height), PROJ_PLANE_D}; //viewport width/height is 1 so let's ignore it for simplicity sake, z axis is just the viewports distance from the camera
+                V3 viewport_coords = {((f32)canvas_x * VIEWPORT_SIZE / (f32)g_back_buffer.size.width), ((f32)canvas_y * VIEWPORT_SIZE / (f32)g_back_buffer.size.height), PROJ_PLANE_D}; //viewport width/height is 1 so let's ignore it for simplicity sake, z axis is just the viewports distance from the camera
             
                 u32 array_length = ARRAY_COUNT(spheres);
                 Sphere *closest_sphere = null;
@@ -171,15 +174,15 @@ internal void win32_primitive_sphere_raytracing() {
                     current_sphere = spheres + i;
                     
                     f32 r = current_sphere->radius;
-                    V3 c0 = {-current_sphere->center.x, -current_sphere->center.y, -current_sphere->center.z}; // equals Origin - Center, origin is all 0's
+                    V3 oc = v3_sub(camera_pos, current_sphere->center);
                     f32 a = v3_dot(viewport_coords, viewport_coords);
-                    f32 b = 2 * v3_dot(c0, viewport_coords);
-                    f32 c = v3_dot(c0, c0) - (r * r);
-                    f32 discriminant = b * b - 4 * a * c; //part of the quadratic equation roots formula
+                    f32 b = 2 * v3_dot(oc, viewport_coords);
+                    f32 c = v3_dot(oc, oc) - (r * r);
+                    f32 discriminant = (b * b) - (4 * a * c); //part of the quadratic equation roots formula
                     
                     if (discriminant >= 0) {
-                        f32 t1 = (-b + sqrt(discriminant)) / 2 * a;
-                        f32 t2 = (-b - sqrt(discriminant)) / 2 * a;
+                        f32 t1 = (-b + sqrt(discriminant)) / (2 * a);
+                        f32 t2 = (-b - sqrt(discriminant)) / (2 * a);
                         
                         if(t1 > 1 && t1 <= MAX_DISTANCE && t1 < closest_t) {
                             closest_t = t1;
