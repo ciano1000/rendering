@@ -152,6 +152,49 @@ internal Win32_Dimension win32_get_window_dimension(HWND window) {
     return result;
 }
 
+typedef struct intersection_result {
+    Sphere *closest_sphere;
+    f32 closest_t;
+} Intersection_Result;
+
+internal Intersection_Result find_sphere_intersection_for_ray(V3 ray_dir, V3 origin, f32 t_min, f32 t_max) {
+    Intersection_Result result = {0};
+    Sphere *closest_sphere = null;
+    f32 closest_t = MAX_DISTANCE;
+    
+    u32 array_length = ARRAY_COUNT(spheres);
+    Sphere *current_sphere;
+    for(u32 i = 0; i < array_length; i++) {
+        current_sphere = spheres + i;
+        
+        f32 r = current_sphere->radius;
+        V3 oc = v3_sub(origin, current_sphere->center);
+        f32 a = v3_dot(ray_dir, ray_dir);
+        f32 b = 2 * v3_dot(oc, ray_dir);
+        f32 c = v3_dot(oc, oc) - (r * r);
+        f32 discriminant = (b * b) - (4 * a * c); //part of the quadratic equation roots formula
+        
+        if (discriminant >= 0) {
+            f32 t1 = (-b + sqrt(discriminant)) / (2 * a);
+            f32 t2 = (-b - sqrt(discriminant)) / (2 * a);
+            
+            if(t1 > t_min  && t1 <= t_max && t1 < closest_t) {
+                closest_t = t1;
+                closest_sphere = current_sphere;
+            }
+            
+            if(t2 > t_min && t2 <= t_max && t2 < closest_t) {
+                closest_t = t2;
+                closest_sphere = current_sphere;
+            }
+        } 
+    }
+
+    result.closest_sphere = closest_sphere;
+    result.closest_t = closest_t;
+    return result;
+}
+
 internal void win32_primitive_sphere_raytracing() {
     u32 stride = 4 * g_back_buffer.size.width;
     u8 *row = g_back_buffer.memory;
@@ -165,39 +208,12 @@ internal void win32_primitive_sphere_raytracing() {
                 f32 canvas_y = -((f32)y - (g_back_buffer.size.height / 2));
                 //aka a point on the ray, the camera origin is another
                 V3 viewport_coords = {((f32)canvas_x * VIEWPORT_SIZE / (f32)g_back_buffer.size.width), ((f32)canvas_y * VIEWPORT_SIZE / (f32)g_back_buffer.size.height), PROJ_PLANE_D}; //viewport width/height is 1 so let's ignore it for simplicity sake, z axis is just the viewports distance from the camera
-            
-                u32 array_length = ARRAY_COUNT(spheres);
-                Sphere *closest_sphere = null;
-                f32 closest_t = MAX_DISTANCE;
-                Sphere *current_sphere;
-                for(u32 i = 0; i < array_length; i++) {
-                    current_sphere = spheres + i;
-                    
-                    f32 r = current_sphere->radius;
-                    V3 oc = v3_sub(camera_pos, current_sphere->center);
-                    f32 a = v3_dot(viewport_coords, viewport_coords);
-                    f32 b = 2 * v3_dot(oc, viewport_coords);
-                    f32 c = v3_dot(oc, oc) - (r * r);
-                    f32 discriminant = (b * b) - (4 * a * c); //part of the quadratic equation roots formula
-                    
-                    if (discriminant >= 0) {
-                        f32 t1 = (-b + sqrt(discriminant)) / (2 * a);
-                        f32 t2 = (-b - sqrt(discriminant)) / (2 * a);
-                        
-                        if(t1 > 1 && t1 <= MAX_DISTANCE && t1 < closest_t) {
-                            closest_t = t1;
-                            closest_sphere = current_sphere;
-                        }
-                        
-                        if(t2 > 1 && t2 <= MAX_DISTANCE && t2 < closest_t) {
-                            closest_t = t2;
-                            closest_sphere = current_sphere;
-                        }
-                    } 
-                }
                 
+                Intersection_Result intersection_result = find_sphere_intersection_for_ray(viewport_coords, camera_pos, 1, MAX_DISTANCE);
+                Sphere *closest_sphere = intersection_result.closest_sphere;
+                f32 closest_t = intersection_result.closest_t;
                 //TODO so far we aren't using the color of the light to do anything....
-                if(closest_sphere != null) {
+                if(intersection_result.closest_sphere) {
                     //if we have a point on the sphere, lets first calculate it's 
                     V3 p = v3_scalar(viewport_coords, closest_t);
                     V3 v = {-p.x, -p.y, -p.z};
@@ -222,6 +238,12 @@ internal void win32_primitive_sphere_raytracing() {
                         V3 r_vec = v3_sub(v3_scalar(normal, 2 * dot), l);
                         f32 r_len = v3_length(r_vec);
                         
+                        //l is already the dir to the light, not the light to the point
+                        Intersection_Result shadow_result = find_sphere_intersection_for_ray(l, p, 0.001, 1); //t_max is 1, what we really need is to add attenuation to our point lights, t_min needs to be epsilon-some undefined small number s.t. p itself doesn't count as a hit
+                        
+                        if(shadow_result.closest_sphere)
+                            continue;
+                        
                         //diffuse
                         if(dot > 0) {
                             light_intensity_sum += (point_light.intensity * dot) / (length_n * length_l);
@@ -238,13 +260,20 @@ internal void win32_primitive_sphere_raytracing() {
                     for(u32 i = 0; i < ARRAY_COUNT(g_directional_lights); i++) {
                         Light directional_light = g_directional_lights[i];
                         
-                        //calculate current direction to point light
                         V3 l = directional_light.direction;
                         f32 length_l = v3_length(l);
                         f32 dot = v3_dot(normal, l);
                         
                         V3 r_vec = v3_sub(v3_scalar(normal, 2 * dot), l);
                         f32 r_len = v3_length(r_vec);
+                        
+                        Sphere *shadowing_sphere = null;
+                        f32 shadow_t = MAX_DISTANCE;
+                        //l is already the dir to the light, not the light to the point
+                        Intersection_Result shadow_result = find_sphere_intersection_for_ray(l, p, 0.001, MAX_DISTANCE);
+                        
+                        if(shadow_result.closest_sphere)
+                            continue;
                         
                         //see if this can be done without an if...
                         if(dot > 0) {
@@ -254,7 +283,9 @@ internal void win32_primitive_sphere_raytracing() {
                         
                         //specular
                         f32 r_dot_v = v3_dot(r_vec, v);
-                    
+                        if(r_dot_v > 0) {
+                            light_intensity_sum += directional_light.intensity * pow(r_dot_v / (r_len * v_len), closest_sphere->specular);
+                        }
                     }
                     
                     if(light_intensity_sum > 1.0f)
