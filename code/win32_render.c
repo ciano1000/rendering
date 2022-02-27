@@ -81,7 +81,7 @@ typedef struct color {
     u8 r, g, b;
 } Color;
 
-global Color background_color = {255, 255, 255};
+global Color background_color = {0, 0, 0};
 
 f32 clamp(f32 val, f32 min, f32 max) {
     if(val < min)
@@ -91,18 +91,34 @@ f32 clamp(f32 val, f32 min, f32 max) {
     return val;
 }
 
+Color color_scalar(Color color, f32 scalar) {
+    Color res = {color.r * scalar, color.g * scalar, color.b * scalar};
+    return res;
+}
+
+Color color_add(Color a, Color b) {
+    Color res = {a.r + b.r, a.g + b.g, a.b + b.b};
+    return res;
+}
+
+Color color_clamp(Color color) {
+    Color res = {clamp(color.r, 0, 255), clamp(color.g, 0, 255), clamp(color.b, 0, 255)};
+    return res;
+}
+
 typedef struct sphere {
     f32 radius;
     V3 center;
     Color color;
     f32 specular;
+    f32 reflectance;
 } Sphere;
 
 global Sphere spheres[] = {
-    {1, {0, -1, 3}, {255, 0, 0}, 500},
-    {1, {2, 0, 4}, {0, 0, 255}, 500},
-    {1, {-2, 0, 4}, {0, 255, 0}, 10},
-    {5000, {0, -5001, 0}, {255, 255, 0}, 1000}
+    {1, {0, -1, 3}, {255, 0, 0}, 500, 0.2},
+    {1, {2, 0, 4}, {0, 0, 255}, 500, 0.3},
+    {1, {-2, 0, 4}, {0, 255, 0}, 10, 0.4},
+    {5000, {0, -5001, 0}, {255, 255, 0}, 1000, 0.5}
 };
 
 typedef struct light {
@@ -290,10 +306,25 @@ internal void win32_primitive_sphere_raytracing() {
                     
                     if(light_intensity_sum > 1.0f)
                         light_intensity_sum = 1.0f;
+                    //TODO essentially we are only doing screen space reflections here(mostly) we are missing a lot of info, we need to rerun the entire ray-tracing algorithm for accurate reflections
+                    //we need to make this entire thing recursive, with a depth value that gets decremented each run
+                    f32 n_dot_v = v3_dot(normal, v);
+                    V3 view_reflection_vector = v3_sub(v3_scalar(normal, 2 * n_dot_v), v);
+                    Intersection_Result reflection_result = find_sphere_intersection_for_ray(view_reflection_vector, p, 0.001, MAX_DISTANCE);
+                    Sphere *reflected_sphere = reflection_result.closest_sphere;
+                    
+                    Color reflected_color = background_color;
+                    Color local_color = color_scalar(closest_sphere->color, light_intensity_sum);
+                    if(reflected_sphere) {
+                        reflected_color = reflected_sphere->color;
+                    }
+                    
+                    Color final_color = color_clamp(color_add(color_scalar(local_color, (1 - closest_sphere->reflectance)), color_scalar(reflected_color, closest_sphere->reflectance)));
+            
                     //foreach directional light...whenever I make a game we can probably always assume this to be 1? Why would you have more than one point light?
-                    col_at_pixel.r = (u8)clamp((f32)closest_sphere->color.r * light_intensity_sum, 0, 255);
-                    col_at_pixel.g = (u8)clamp((f32)closest_sphere->color.g * light_intensity_sum, 0, 255);
-                    col_at_pixel.b = (u8)clamp((f32)closest_sphere->color.b * light_intensity_sum, 0, 255);
+                    col_at_pixel.r = (u8)final_color.r;
+                    col_at_pixel.g = (u8)final_color.g;
+                    col_at_pixel.b = (u8)final_color.b;
                 } else {
                     col_at_pixel = background_color;
                 }
