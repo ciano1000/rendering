@@ -10,8 +10,7 @@ TODO
 #include <string.h>
 #include <Windows.h>
 #include <math.h>
-
-#define MAX_DISTANCE 10000.0f //arbitrary max tracing distance
+#include <float.h>
 
 //Current assumption is that the viewport is a square and distance between origin and viewport is 1, this avoids weird FOV issues
 //TODO in future should be able to set any aspect ratio & fov, and then calculate d from that, note that this will affect some of the calculations below that will need to be updated
@@ -24,6 +23,7 @@ TODO
 #define PROJ_PLANE_D 1
 
 #define VIEWPORT_SIZE 1
+#define MAX_REFLECTION_ITERATIONS 3
 
 #define ARRAY_COUNT(array) (sizeof(array) / sizeof(array[0]))
 
@@ -176,10 +176,12 @@ typedef struct intersection_result {
 internal Intersection_Result find_sphere_intersection_for_ray(V3 ray_dir, V3 origin, f32 t_min, f32 t_max) {
     Intersection_Result result = {0};
     Sphere *closest_sphere = null;
-    f32 closest_t = MAX_DISTANCE;
+    f32 closest_t = t_max;
     
     u32 array_length = ARRAY_COUNT(spheres);
     Sphere *current_sphere;
+    
+    //book we're following is using Javascript which defaults to 64-bit numbers so does not suffer as badly from floating-point precision, we need to use a slightly different form of the quadratic formula solver
     for(u32 i = 0; i < array_length; i++) {
         current_sphere = spheres + i;
         
@@ -191,8 +193,8 @@ internal Intersection_Result find_sphere_intersection_for_ray(V3 ray_dir, V3 ori
         f32 discriminant = (b * b) - (4 * a * c); //part of the quadratic equation roots formula
         
         if (discriminant >= 0) {
-            f32 t1 = (-b + sqrt(discriminant)) / (2 * a);
-            f32 t2 = (-b - sqrt(discriminant)) / (2 * a);
+            f32 t1 = ((-b) + sqrt(discriminant)) / (2 * a);
+            f32 t2 = ((-b) - sqrt(discriminant)) / (2 * a);
             
             if(t1 > t_min  && t1 <= t_max && t1 < closest_t) {
                 closest_t = t1;
@@ -205,10 +207,119 @@ internal Intersection_Result find_sphere_intersection_for_ray(V3 ray_dir, V3 ori
             }
         } 
     }
-
+    
     result.closest_sphere = closest_sphere;
     result.closest_t = closest_t;
     return result;
+}
+
+internal Color trace_ray(V3 dir, V3 origin, f32 min_dist, f32 max_dist, u32 iteration) {
+    Color final_color = background_color;
+    
+    Intersection_Result intersection_result = find_sphere_intersection_for_ray(dir, origin, min_dist, max_dist);
+    Sphere *closest_sphere = intersection_result.closest_sphere;
+    f32 closest_t = intersection_result.closest_t;
+    //TODO so far we aren't using the color of the light to do anything....
+    if(intersection_result.closest_sphere) {
+        //if we have a point on the sphere, lets first calculate it's 
+        V3 p = v3_add(origin, v3_scalar(dir, closest_t));
+        V3 v = {-dir.x, -dir.y, -dir.z};
+        f32 v_len = v3_length(v);
+        
+        //orgin is 0 so don't need the O in the parametric line formula
+        V3 normal = v3_normalize(v3_sub(p, closest_sphere->center)); 
+        f32 length_n = v3_length(normal);
+        
+        f32 light_intensity_sum = g_ambient.intensity;
+        //foreach point light...
+        for(u32 i = 0; i < ARRAY_COUNT(g_point_lights); i++) {
+            Light point_light = g_point_lights[i];
+            
+            //diffuse...
+            
+            //calculate current direction to point light
+            V3 l = v3_sub(point_light.position, p);
+            f32 length_l = v3_length(l);
+            f32 dot = v3_dot(normal, l);
+            
+            V3 r_vec = v3_sub(v3_scalar(normal, 2 * dot), l);
+            f32 r_len = v3_length(r_vec);
+            
+            //l is already the dir to the light, not the light to the point
+            Intersection_Result shadow_result = find_sphere_intersection_for_ray(l, p, 0.001, 1.0f); //t_max is 1, what we really need is to add attenuation to our point lights, t_min needs to be epsilon-some undefined small number s.t. p itself doesn't count as a hit
+            
+            if(shadow_result.closest_sphere)
+                continue;
+            
+            //diffuse
+            if(dot > 0) {
+                light_intensity_sum += (point_light.intensity * dot) / (length_n * length_l);
+            }
+            
+            //specular
+            f32 r_dot_v = v3_dot(r_vec, v);
+            
+            if(r_dot_v > 0) {
+                light_intensity_sum += point_light.intensity * pow(r_dot_v / (r_len * v_len), closest_sphere->specular);
+            }
+        }
+        
+        for(u32 i = 0; i < ARRAY_COUNT(g_directional_lights); i++) {
+            Light directional_light = g_directional_lights[i];
+            
+            V3 l = directional_light.direction;
+            f32 length_l = v3_length(l);
+            f32 dot = v3_dot(normal, l);
+            
+            V3 r_vec = v3_sub(v3_scalar(normal, 2 * dot), l);
+            f32 r_len = v3_length(r_vec);
+            
+            Sphere *shadowing_sphere = null;
+            f32 shadow_t = FLT_MAX;
+            //l is already the dir to the light, not the light to the point
+            Intersection_Result shadow_result = find_sphere_intersection_for_ray(l, p, 0.001, FLT_MAX);
+            
+            if(shadow_result.closest_sphere)
+                continue;
+            
+            //see if this can be done without an if...
+            if(dot > 0) {
+                //think it has to be done in this order, as assuming 1/{something} operations with floats causes imprecision, review that, something to do with associativity/commutavity
+                light_intensity_sum += (directional_light.intensity * dot) / (length_n * length_l);
+            }
+            
+            //specular
+            f32 r_dot_v = v3_dot(r_vec, v);
+            if(r_dot_v > 0) {
+                light_intensity_sum += directional_light.intensity * pow(r_dot_v / (r_len * v_len), closest_sphere->specular);
+            }
+        }
+        
+        if(light_intensity_sum > 1.0f)
+            light_intensity_sum = 1.0f;
+        //TODO essentially we are only doing screen space reflections here(mostly) we are missing a lot of info, we need to rerun the entire ray-tracing algorithm for accurate reflections
+        //we need to make this entire thing recursive, with a depth value that gets decremented each run
+        f32 n_dot_v = v3_dot(normal, v);
+        V3 view_reflection_vector = v3_sub(v3_scalar(normal, 2 * n_dot_v), v);
+        Color local_color = color_scalar(closest_sphere->color, light_intensity_sum);
+        //TODO add a flag for enabling this at build time
+        // // //debug normal view 
+        // local_color.r = (normal.x * 0.5f + 0.5f) * 255;
+        // local_color.g = (normal.y * 0.5f + 0.5f) * 255;
+        // local_color.b = (normal.z * 0.5f + 0.5f) * 255;
+        
+        if(iteration <= 0 || closest_sphere->reflectance <= 0) {
+            return local_color;
+        }
+        
+        Color reflected_color = trace_ray(view_reflection_vector, p, 0.001, FLT_MAX, iteration - 1);
+        
+        final_color = color_add(color_scalar(local_color, (1 - closest_sphere->reflectance)), color_scalar(reflected_color, closest_sphere->reflectance));
+        //foreach directional light...whenever I make a game we can probably always assume this to be 1? Why would you have more than one point light?
+        
+    }
+    
+    return final_color;
 }
 
 internal void win32_primitive_sphere_raytracing() {
@@ -217,7 +328,7 @@ internal void win32_primitive_sphere_raytracing() {
     for(u32 y = 0; y < g_back_buffer.size.height; y++) {
         u32 *pixel = (u32*)row;
         for(u32 x = 0; x < g_back_buffer.size.width; x++) {
-        
+            
             Color col_at_pixel = {0};
             {
                 f32 canvas_x = (f32)x - (g_back_buffer.size.width / 2);
@@ -225,114 +336,13 @@ internal void win32_primitive_sphere_raytracing() {
                 //aka a point on the ray, the camera origin is another
                 V3 viewport_coords = {((f32)canvas_x * VIEWPORT_SIZE / (f32)g_back_buffer.size.width), ((f32)canvas_y * VIEWPORT_SIZE / (f32)g_back_buffer.size.height), PROJ_PLANE_D}; //viewport width/height is 1 so let's ignore it for simplicity sake, z axis is just the viewports distance from the camera
                 
-                Intersection_Result intersection_result = find_sphere_intersection_for_ray(viewport_coords, camera_pos, 1, MAX_DISTANCE);
-                Sphere *closest_sphere = intersection_result.closest_sphere;
-                f32 closest_t = intersection_result.closest_t;
-                //TODO so far we aren't using the color of the light to do anything....
-                if(intersection_result.closest_sphere) {
-                    //if we have a point on the sphere, lets first calculate it's 
-                    V3 p = v3_scalar(viewport_coords, closest_t);
-                    V3 v = {-p.x, -p.y, -p.z};
-                    f32 v_len = v3_length(v);
-                    
-                    //orgin is 0 so don't need the O in the parametric line formula
-                    V3 normal = v3_normalize(v3_sub(p, closest_sphere->center)); 
-                    f32 length_n = v3_length(normal);
-                    
-                    f32 light_intensity_sum = g_ambient.intensity;
-                    //foreach point light...
-                    for(u32 i = 0; i < ARRAY_COUNT(g_point_lights); i++) {
-                        Light point_light = g_point_lights[i];
-                        
-                        //diffuse...
-                        
-                        //calculate current direction to point light
-                        V3 l = v3_sub(point_light.position, p);
-                        f32 length_l = v3_length(l);
-                        f32 dot = v3_dot(normal, l);
-                        
-                        V3 r_vec = v3_sub(v3_scalar(normal, 2 * dot), l);
-                        f32 r_len = v3_length(r_vec);
-                        
-                        //l is already the dir to the light, not the light to the point
-                        Intersection_Result shadow_result = find_sphere_intersection_for_ray(l, p, 0.001, 1); //t_max is 1, what we really need is to add attenuation to our point lights, t_min needs to be epsilon-some undefined small number s.t. p itself doesn't count as a hit
-                        
-                        if(shadow_result.closest_sphere)
-                            continue;
-                        
-                        //diffuse
-                        if(dot > 0) {
-                            light_intensity_sum += (point_light.intensity * dot) / (length_n * length_l);
-                        }
-                        
-                        //specular
-                        f32 r_dot_v = v3_dot(r_vec, v);
-                        
-                        if(r_dot_v > 0) {
-                            light_intensity_sum += point_light.intensity * pow(r_dot_v / (r_len * v_len), closest_sphere->specular);
-                        }
-                    }
-                    
-                    for(u32 i = 0; i < ARRAY_COUNT(g_directional_lights); i++) {
-                        Light directional_light = g_directional_lights[i];
-                        
-                        V3 l = directional_light.direction;
-                        f32 length_l = v3_length(l);
-                        f32 dot = v3_dot(normal, l);
-                        
-                        V3 r_vec = v3_sub(v3_scalar(normal, 2 * dot), l);
-                        f32 r_len = v3_length(r_vec);
-                        
-                        Sphere *shadowing_sphere = null;
-                        f32 shadow_t = MAX_DISTANCE;
-                        //l is already the dir to the light, not the light to the point
-                        Intersection_Result shadow_result = find_sphere_intersection_for_ray(l, p, 0.001, MAX_DISTANCE);
-                        
-                        if(shadow_result.closest_sphere)
-                            continue;
-                        
-                        //see if this can be done without an if...
-                        if(dot > 0) {
-                            //think it has to be done in this order, as assuming 1/{something} operations with floats causes imprecision, review that, something to do with associativity/commutavity
-                            light_intensity_sum += (directional_light.intensity * dot) / (length_n * length_l);
-                        }
-                        
-                        //specular
-                        f32 r_dot_v = v3_dot(r_vec, v);
-                        if(r_dot_v > 0) {
-                            light_intensity_sum += directional_light.intensity * pow(r_dot_v / (r_len * v_len), closest_sphere->specular);
-                        }
-                    }
-                    
-                    if(light_intensity_sum > 1.0f)
-                        light_intensity_sum = 1.0f;
-                    //TODO essentially we are only doing screen space reflections here(mostly) we are missing a lot of info, we need to rerun the entire ray-tracing algorithm for accurate reflections
-                    //we need to make this entire thing recursive, with a depth value that gets decremented each run
-                    f32 n_dot_v = v3_dot(normal, v);
-                    V3 view_reflection_vector = v3_sub(v3_scalar(normal, 2 * n_dot_v), v);
-                    Intersection_Result reflection_result = find_sphere_intersection_for_ray(view_reflection_vector, p, 0.001, MAX_DISTANCE);
-                    Sphere *reflected_sphere = reflection_result.closest_sphere;
-                    
-                    Color reflected_color = background_color;
-                    Color local_color = color_scalar(closest_sphere->color, light_intensity_sum);
-                    if(reflected_sphere) {
-                        reflected_color = reflected_sphere->color;
-                    }
-                    
-                    Color final_color = color_clamp(color_add(color_scalar(local_color, (1 - closest_sphere->reflectance)), color_scalar(reflected_color, closest_sphere->reflectance)));
-            
-                    //foreach directional light...whenever I make a game we can probably always assume this to be 1? Why would you have more than one point light?
-                    col_at_pixel.r = (u8)final_color.r;
-                    col_at_pixel.g = (u8)final_color.g;
-                    col_at_pixel.b = (u8)final_color.b;
-                } else {
-                    col_at_pixel = background_color;
-                }
+                col_at_pixel = trace_ray(viewport_coords, camera_pos, 1, FLT_MAX, MAX_REFLECTION_ITERATIONS);
+                color_clamp(col_at_pixel);
             }
             
-            u8 red = col_at_pixel.r;
-            u8 green = col_at_pixel.g;
-            u8 blue = col_at_pixel.b;
+            u8 red = (u8)col_at_pixel.r;
+            u8 green = (u8)col_at_pixel.g;
+            u8 blue = (u8)col_at_pixel.b;
             u8 padding = 0;
             //Memory Layout (bytes): BB GG RR XX
             //Since this is Little Endian - LSB first
@@ -409,7 +419,7 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
                                     class_name,
                                     "RenderMcRenderFace",
                                     WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                                    CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                                    CW_USEDEFAULT, CW_USEDEFAULT, BUFFER_WIDTH, BUFFER_HEIGHT,
                                     null,
                                     null,
                                     h_instance,
@@ -417,10 +427,10 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
         
         if(hwnd) {
             ShowWindow(hwnd, cmd_show);
-
+            
             //since we set our class style to be "CS_OWNDC" we don't need to release this as we don't share it with any other window.
             HDC device_ctx = GetDC(hwnd);
-              
+            
             g_back_buffer.size.width = BUFFER_WIDTH;
             g_back_buffer.size.height = BUFFER_HEIGHT;
             g_back_buffer.stride = g_back_buffer.size.width * BYTES_PER_PIXEL;
@@ -451,7 +461,7 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
             
             u32 refresh_rate = 60;
             f32 target_seconds_per_frame = 1.0f / refresh_rate;
-             
+            
             LARGE_INTEGER start_counter;
             QueryPerformanceCounter(&start_counter);
             
@@ -487,7 +497,7 @@ int WinMain(HINSTANCE h_instance, HINSTANCE prev_instance, LPSTR cmd, int cmd_sh
                 wsprintfA(buffer, "ms/frame: %dms, fps: %dfps, %dcycles per frame\n", time_elapsed_ms, frames_per_second, elapsed_cycles);
                 OutputDebugStringA(buffer);
 #endif               
-
+                
                 //TODO Cian: check opposite case where we miss our framerate
                 while(actual_seconds_for_frame < target_seconds_per_frame) {
                     if(is_granular_sleep) {
