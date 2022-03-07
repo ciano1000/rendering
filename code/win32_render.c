@@ -106,6 +106,11 @@ Color color_clamp(Color color) {
     return res;
 }
 
+b32 definitelyGreaterThan(float a, float b, float epsilon)
+{
+    return (a - b) > ( (fabs(a) < fabs(b) ? fabs(b) : fabs(a)) * epsilon);
+}
+
 typedef struct sphere {
     f32 radius;
     V3 center;
@@ -228,7 +233,8 @@ internal Color trace_ray(V3 dir, V3 origin, f32 min_dist, f32 max_dist, u32 iter
         
         //orgin is 0 so don't need the O in the parametric line formula
         V3 normal = v3_normalize(v3_sub(p, closest_sphere->center)); 
-        f32 length_n = v3_length(normal);
+        f32 length_n = 1.0f;
+        V3 fixed_p = v3_add(p, v3_scalar(normal, 0.001));
         
         f32 light_intensity_sum = g_ambient.intensity;
         //foreach point light...
@@ -246,7 +252,7 @@ internal Color trace_ray(V3 dir, V3 origin, f32 min_dist, f32 max_dist, u32 iter
             f32 r_len = v3_length(r_vec);
             
             //l is already the dir to the light, not the light to the point
-            Intersection_Result shadow_result = find_sphere_intersection_for_ray(l, p, 0.001, 1.0f); //t_max is 1, what we really need is to add attenuation to our point lights, t_min needs to be epsilon-some undefined small number s.t. p itself doesn't count as a hit
+            Intersection_Result shadow_result = find_sphere_intersection_for_ray(l, fixed_p, 0.001, 1.0f); //t_max is 1, what we really need is to add attenuation to our point lights, t_min needs to be epsilon-some undefined small number s.t. p itself doesn't count as a hit
             
             if(shadow_result.closest_sphere)
                 continue;
@@ -277,7 +283,7 @@ internal Color trace_ray(V3 dir, V3 origin, f32 min_dist, f32 max_dist, u32 iter
             Sphere *shadowing_sphere = null;
             f32 shadow_t = FLT_MAX;
             //l is already the dir to the light, not the light to the point
-            Intersection_Result shadow_result = find_sphere_intersection_for_ray(l, p, 0.001, FLT_MAX);
+            Intersection_Result shadow_result = find_sphere_intersection_for_ray(l, fixed_p, 0.001, FLT_MAX);
             
             if(shadow_result.closest_sphere)
                 continue;
@@ -312,7 +318,7 @@ internal Color trace_ray(V3 dir, V3 origin, f32 min_dist, f32 max_dist, u32 iter
             return local_color;
         }
         
-        Color reflected_color = trace_ray(view_reflection_vector, p, 0.001, FLT_MAX, iteration - 1);
+        Color reflected_color = trace_ray(view_reflection_vector, fixed_p, 0.001, FLT_MAX, iteration - 1);
         
         final_color = color_add(color_scalar(local_color, (1 - closest_sphere->reflectance)), color_scalar(reflected_color, closest_sphere->reflectance));
         //foreach directional light...whenever I make a game we can probably always assume this to be 1? Why would you have more than one point light?
